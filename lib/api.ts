@@ -1,7 +1,19 @@
 import axios from "axios";
 
+function resolveApiBaseUrl() {
+  const configured = (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
+  if (!configured) return "/api";
+
+  // Ignore localhost URLs in deployed/browser builds and fall back to same-origin API routes.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(configured)) {
+    return "/api";
+  }
+
+  return configured;
+}
+
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || "/api",
+  baseURL: resolveApiBaseUrl(),
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
