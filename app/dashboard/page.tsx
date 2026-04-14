@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Coins, Briefcase, Search, MessageSquare, Wallet, Code2, Plus, Bell, CheckCheck,
-  BookmarkCheck, UserMinus, ChevronDown, ChevronUp, Eye
+  BookmarkCheck, UserMinus, Eye
 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import {
@@ -50,7 +50,14 @@ type ProposalItem = {
   job?: {
     id: number;
     title: string;
+    budget?: number;
     status: "OPEN" | "ACCEPTED" | "IN_PROGRESS" | "COMPLETED";
+    client?: {
+      id: number;
+      username: string | null;
+      name: string;
+      email: string;
+    };
   };
   freelancer: {
     id: number;
@@ -137,7 +144,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const proposalIdFromQuery = Number(searchParams.get("proposalId") || "0");
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [selectedJobId, setSelectedJobId] = useState(0);
   const [proposalStatusFilter, setProposalStatusFilter] = useState<"ALL" | "SUBMITTED" | "SHORTLISTED" | "ACCEPTED" | "REJECTED">("ALL");
   const [clientViewTab, setClientViewTab] = useState<"proposals" | "saved">("proposals");
@@ -170,8 +177,6 @@ export default function DashboardPage() {
     }
   }, [myJobsQuery.data, selectedJobId]);
 
-  const selectedJob = myJobsQuery.data?.find((job) => job.id === selectedJobId) || null;
-
   const proposalsQuery = useQuery({
     queryKey: ["client-proposals", currentUserId],
     queryFn: async () => {
@@ -180,6 +185,16 @@ export default function DashboardPage() {
     },
     enabled: user?.role === "CLIENT" && currentUserId > 0,
     refetchInterval: 5000,
+  });
+
+  const freelancerAppliedJobsQuery = useQuery({
+    queryKey: ["freelancer-applied-jobs", currentUserId],
+    queryFn: async () => {
+      const response = await proposalsApi.inbox();
+      return (response.data?.proposals as ProposalItem[]) || [];
+    },
+    enabled: user?.role === "FREELANCER" && currentUserId > 0,
+    refetchInterval: 7000,
   });
 
   const savedFreelancersQuery = useQuery({
@@ -339,8 +354,8 @@ export default function DashboardPage() {
   });
 
   const quickActions = [
-    { label: "Browse jobs", icon: Search, href: "/jobs", show: true },
-    { label: "Browse freelancers", icon: Eye, href: "/freelancers", show: true },
+    { label: "Browse jobs", icon: Search, href: "/jobs", show: user?.role === "FREELANCER" },
+    { label: "Browse freelancers", icon: Eye, href: "/freelancers", show: user?.role === "CLIENT" },
     { label: "Get Jobs", icon: Briefcase, href: "/freelancer/jobs", show: user?.role === "FREELANCER" },
     { label: "Solve Tasks", icon: Code2, href: "/tasks", show: user?.role === "FREELANCER" },
     { label: "Post a Job", icon: Plus, href: "/client/post-job", show: user?.role === "CLIENT" },
@@ -360,7 +375,7 @@ export default function DashboardPage() {
               ...(user?.role === "FREELANCER" ? [{ label: "Get Jobs", href: "/freelancer/jobs", icon: Briefcase }] : []),
               ...(user?.role === "CLIENT" ? [{ label: "Post a Job", href: "/client/post-job", icon: Plus }] : []),
               { label: "Freelancers", href: "/freelancers", icon: Eye },
-              { label: "Job Board", href: "/jobs", icon: Search },
+              ...(user?.role === "FREELANCER" ? [{ label: "Job Board", href: "/jobs", icon: Search }] : []),
               { label: "Messages & Support", href: "/support", icon: MessageSquare },
               { label: "Wallet", href: "/wallet", icon: Wallet },
               ...(user?.role === "FREELANCER" ? [{ label: "Coding Tasks", href: "/tasks", icon: Code2 }] : []),
@@ -473,7 +488,7 @@ export default function DashboardPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-heading text-xl font-semibold text-surface-900">Client profile</h2>
               <button onClick={() => router.push("/onboarding/client?edit=1")} className="btn-secondary btn-md">
-                {clientProfileQuery.data ? "Edit profile" : "Complete profile"}
+                {clientProfileQuery.data ? "Edit profile" : "Create profile"}
               </button>
             </div>
 
@@ -661,7 +676,7 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-heading text-xl font-semibold text-surface-900">Freelancer profile</h2>
             <button onClick={() => router.push("/onboarding/freelancer?edit=1")} className="btn-secondary btn-md">
-              {freelancerProfileQuery.data ? "Edit profile" : "Complete profile"}
+              {freelancerProfileQuery.data ? "Edit profile" : "Create profile"}
             </button>
           </div>
 
@@ -685,6 +700,49 @@ export default function DashboardPage() {
           )}
 
           <FreelancerAnalytics />
+
+          <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }} className="mt-6 card-surface p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-heading text-xl font-semibold text-surface-900">Jobs applied</h2>
+              <button onClick={() => router.push("/freelancer/jobs")} className="btn-secondary btn-sm">
+                Explore more jobs
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {(freelancerAppliedJobsQuery.data || []).map((proposal) => (
+                <article key={proposal.id} className="rounded-xl border border-surface-200/80 bg-white p-4 transition-colors hover:bg-surface-50/50">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-surface-900">{proposal.job?.title || "Job"}</p>
+                      <p className="text-xs text-surface-500">
+                        Client: {proposal.job?.client?.username || proposal.job?.client?.name || "Unknown"}
+                      </p>
+                    </div>
+                    <span className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ring-1 ${proposalStatusConfig[proposal.status] || "bg-surface-100 text-surface-700"}`}>
+                      {proposal.status}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-surface-500">
+                    <p>Applied: {new Date(proposal.createdAt).toLocaleString()}</p>
+                    <p>Budget: ₹{proposal.job?.budget || 0}</p>
+                  </div>
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      onClick={() => proposal.job?.id && router.push(`/jobs/${proposal.job.id}`)}
+                    >
+                      View job
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!freelancerAppliedJobsQuery.data?.length ? (
+                <p className="text-sm text-surface-500">No applications yet. Apply to jobs and track them here.</p>
+              ) : null}
+            </div>
+          </motion.section>
         </motion.section>
       ) : null}
 

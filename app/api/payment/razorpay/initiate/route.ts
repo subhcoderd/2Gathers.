@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { getAuthenticatedUserId } from "@/lib/server-auth";
 
 const DEFAULT_TOKENS_PER_INR = Number(process.env.RAZORPAY_TOKENS_PER_INR || "10");
 const RAZORPAY_BASE_URL = process.env.RAZORPAY_BASE_URL || "https://api.razorpay.com";
@@ -52,16 +53,20 @@ async function razorpayRequest(path: string, body: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
+    const authUserId = getAuthenticatedUserId(request);
+    if (!authUserId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
-    const userId = String(body.userId || "");
     const amountInInr = Number(body.amount || 0);
 
-    if (!userId || !Number.isFinite(amountInInr) || amountInInr <= 0) {
-      return NextResponse.json({ error: "userId and amount are required" }, { status: 400 });
+    if (!Number.isFinite(amountInInr) || amountInInr <= 0) {
+      return NextResponse.json({ error: "amount is required" }, { status: 400 });
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: Number(userId) },
+      where: { id: authUserId },
       select: { id: true, walletAddress: true, username: true, email: true },
     });
 

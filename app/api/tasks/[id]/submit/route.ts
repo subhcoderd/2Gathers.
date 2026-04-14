@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 import ts from "typescript";
+import { WEB3_NETWORK_NAME } from "@/lib/tokenomics";
 
 interface SubmissionRequest {
   code: string;
@@ -230,7 +231,24 @@ export async function POST(
 
       reward = task.rewardTokens;
 
-      if (user.walletAddress) {
+      const alreadyClaimed = await prisma.tokenTransaction.findFirst({
+        where: {
+          userId,
+          jobId: null,
+          proposalId: null,
+          type: "TASK_REWARD_CREDIT",
+          network: `${WEB3_NETWORK_NAME}:task:${numericTaskId}`,
+          status: "CONFIRMED",
+        },
+        select: { id: true },
+      });
+
+      if (alreadyClaimed) {
+        alreadyRewarded = true;
+        reward = 0;
+      }
+
+      if (reward > 0 && user.walletAddress) {
         try {
           await mintTokensToWallet({ walletAddress: user.walletAddress, tokenAmount: reward });
           mintedOnChain = true;
@@ -239,10 +257,27 @@ export async function POST(
         }
       }
 
-      await prisma.user.update({
-        where: { id: userId },
-        data: { tokens: { increment: reward } },
-      });
+      if (reward > 0) {
+        await prisma.$transaction(async (tx) => {
+          await tx.user.update({
+            where: { id: userId },
+            data: { tokens: { increment: reward } },
+          });
+
+          await tx.tokenTransaction.create({
+            data: {
+              txHash: `task-${userId}-${numericTaskId}-${Date.now()}`,
+              userId,
+              type: "TASK_REWARD_CREDIT",
+              tokenAmount: reward,
+              tokenPriceInr: 0,
+              totalInr: 0,
+              status: "CONFIRMED",
+              network: `${WEB3_NETWORK_NAME}:task:${numericTaskId}`,
+            },
+          });
+        });
+      }
     }
 
     return NextResponse.json({

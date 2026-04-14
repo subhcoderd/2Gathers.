@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { comparePassword, issueAccessToken } from "@/lib/auth";
+import { issueAccessToken } from "@/lib/auth";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 
 const loginSchema = z.object({
@@ -12,9 +13,85 @@ const loginSchema = z.object({
 export async function POST(request: Request) {
   const payload = loginSchema.parse(await request.json());
 
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [{ username: payload.username }, { email: payload.username }],
+  const identifier = payload.username.trim().toLowerCase();
+  let email = identifier;
+
+  if (!identifier.includes("@")) {
+    const existing = await prisma.user.findUnique({
+      where: { username: payload.username },
+      select: { email: true },
+    });
+
+    if (!existing?.email) {
+      return NextResponse.json({ detail: "Invalid username/email or password." }, { status: 401 });
+    }
+
+    email = existing.email;
+  }
+
+  let data: { user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> } | null };
+  let error: { message?: string } | null = null;
+
+  try {
+    const supabase = getSupabaseServerClient();
+    const result = await supabase.auth.signInWithPassword({
+      email,
+      password: payload.password,
+    });
+    data = result.data;
+    error = result.error;
+  } catch (clientError) {
+    return NextResponse.json(
+      { detail: clientError instanceof Error ? clientError.message : "Supabase Auth is not configured." },
+      { status: 503 },
+    );
+  }
+
+  if (error || !data.user?.email) {
+    const detail = (error?.message || "").toLowerCase().includes("email not confirmed")
+      ? "Please verify your email before signing in."
+      : "Invalid username/email or password.";
+    const status = detail.includes("verify your email") ? 403 : 401;
+    return NextResponse.json({ detail }, { status });
+  }
+
+  const supaEmail = data.user.email;
+  const metadata = (data.user.user_metadata || {}) as { username?: string; role?: string };
+  const existingUser = await prisma.user.findUnique({
+    where: { email: supaEmail },
+    select: {
+      username: true,
+      role: true,
+      freelancerProfile: { select: { id: true } },
+      clientProfile: { select: { id: true } },
+    },
+  });
+
+  const fallbackUsername = metadata.username || existingUser?.username || supaEmail.split("@")[0] || `user_${data.user.id.slice(0, 8)}`;
+  const metadataRole = metadata.role === "CLIENT" || metadata.role === "FREELANCER" || metadata.role === "ADMIN" ? metadata.role : null;
+  let profileInferredRole: "CLIENT" | "FREELANCER" | null = null;
+  if (existingUser?.freelancerProfile && !existingUser?.clientProfile) {
+    profileInferredRole = "FREELANCER";
+  } else if (existingUser?.clientProfile && !existingUser?.freelancerProfile) {
+    profileInferredRole = "CLIENT";
+  }
+  const nextRole = metadataRole || profileInferredRole || existingUser?.role || "CLIENT";
+
+  const synced = await prisma.user.upsert({
+    where: { email: supaEmail },
+    update: {
+      emailVerified: true,
+      username: fallbackUsername,
+      name: fallbackUsername,
+      role: nextRole,
+    },
+    create: {
+      email: supaEmail,
+      username: fallbackUsername,
+      name: fallbackUsername,
+      role: nextRole,
+      tokens: nextRole === "CLIENT" ? 100 : 50,
+      emailVerified: true,
     },
     select: {
       id: true,
@@ -23,8 +100,6 @@ export async function POST(request: Request) {
       role: true,
       tokens: true,
       walletAddress: true,
-      passwordHash: true,
-      emailVerified: true,
       freelancerProfile: {
         select: {
           id: true,
@@ -38,30 +113,17 @@ export async function POST(request: Request) {
     },
   });
 
-  if (!user || !user.passwordHash) {
-    return NextResponse.json({ detail: "Invalid username/email or password." }, { status: 401 });
-  }
-
-  const ok = await comparePassword(payload.password, user.passwordHash);
-  if (!ok) {
-    return NextResponse.json({ detail: "Invalid username/email or password." }, { status: 401 });
-  }
-
-  if (!user.emailVerified) {
-    return NextResponse.json({ detail: "Please verify your email before signing in." }, { status: 403 });
-  }
-
   return NextResponse.json({
-    accessToken: issueAccessToken(user.id),
+    accessToken: issueAccessToken(synced.id),
     user: {
-      id: String(user.id),
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      tokens: user.tokens,
-      walletAddress: user.walletAddress,
-      hasFreelancerProfile: !!user.freelancerProfile,
-      hasClientProfile: !!user.clientProfile,
+      id: String(synced.id),
+      username: synced.username,
+      email: synced.email,
+      role: synced.role,
+      tokens: synced.tokens,
+      walletAddress: synced.walletAddress,
+      hasFreelancerProfile: !!synced.freelancerProfile,
+      hasClientProfile: !!synced.clientProfile,
     },
   });
 }

@@ -10,8 +10,8 @@ import { useBlockchain } from "@/hooks/useBlockchain";
 import { useAuth } from "@/context/AuthContext";
 
 export default function WalletPage() {
-  const { user } = useAuth();
-  const blockchain = useBlockchain(user?.id);
+  const { user, token } = useAuth();
+  const blockchain = useBlockchain(user?.id, token);
   const [walletInput, setWalletInput] = useState(blockchain.walletAddress ?? "");
   const [buyAmount, setBuyAmount] = useState("100");
   const [copied, setCopied] = useState(false);

@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getWalletState } from "@/lib/blockchain";
+import { getAuthenticatedUserId } from "@/lib/server-auth";
 
 export async function GET(request: NextRequest) {
-  const userId = request.nextUrl.searchParams.get("userId") || "";
-
+  const userId = getAuthenticatedUserId(request);
   if (!userId) {
-    return NextResponse.json({ error: "userId is required" }, { status: 400 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const wallet = await getWalletState(userId);
+    const wallet = await getWalletState(String(userId));
     return NextResponse.json({ wallet });
   } catch (error) {
     return NextResponse.json(

@@ -34,7 +34,7 @@ export type BlockchainState = {
   buyTokens: (amount: number) => Promise<void>;
 };
 
-export function useBlockchain(userId?: string | number): BlockchainState {
+export function useBlockchain(userId?: string | number, token?: string | null): BlockchainState {
   const [state, setState] = useState<WalletState>({
     userId: String(userId || ""),
     walletAddress: null,
@@ -56,7 +56,9 @@ export function useBlockchain(userId?: string | number): BlockchainState {
     setError(null);
 
     try {
-      const response = await fetch(`/api/blockchain/wallet?userId=${encodeURIComponent(String(userId))}`);
+      const response = await fetch("/api/blockchain/wallet", {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       const payload = (await response.json()) as { wallet?: WalletState; error?: string };
 
       if (!response.ok || !payload.wallet) {
@@ -74,7 +76,7 @@ export function useBlockchain(userId?: string | number): BlockchainState {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId, token]);
 
   async function linkWalletAddress(walletAddress: string) {
     if (!userId) {
@@ -86,8 +88,11 @@ export function useBlockchain(userId?: string | number): BlockchainState {
 
     const response = await fetch("/api/users/wallet", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: String(userId), walletAddress }),
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ walletAddress }),
     });
 
     const payload = (await response.json()) as { user?: unknown; error?: string };
@@ -112,8 +117,11 @@ export function useBlockchain(userId?: string | number): BlockchainState {
     try {
       const response = await fetch("/api/payment/razorpay/initiate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: String(userId), amount }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ amount }),
       });
 
       const payload = (await response.json()) as { paymentUrl?: string; error?: string };
@@ -125,7 +133,7 @@ export function useBlockchain(userId?: string | number): BlockchainState {
         throw new Error("Onramp did not return a payment URL");
       }
 
-      window.location.assign(payload.paymentUrl);
+      globalThis.location.assign(payload.paymentUrl);
     } catch (buyError) {
       setError(buyError instanceof Error ? buyError.message : "Unable to start onramp");
     }

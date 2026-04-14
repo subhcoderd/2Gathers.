@@ -11,7 +11,20 @@ export default function VerifyEmailPage() {
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    setToken(query.get("token") || "");
+    const queryToken = query.get("token") || query.get("access_token") || "";
+    if (queryToken) {
+      setToken(queryToken);
+      return;
+    }
+
+    const hash = window.location.hash?.startsWith("#") ? window.location.hash.slice(1) : "";
+    if (!hash) {
+      setToken("");
+      return;
+    }
+
+    const hashParams = new URLSearchParams(hash);
+    setToken(hashParams.get("access_token") || "");
   }, []);
 
   useEffect(() => {

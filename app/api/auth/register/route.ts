@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { hashPassword, issueAccessToken, makeVerificationToken, verificationExpiryDate } from "@/lib/auth";
-import { sendMail } from "@/lib/mailer";
+import { issueAccessToken } from "@/lib/auth";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 
 const registerSchema = z.object({
@@ -13,7 +13,7 @@ const registerSchema = z.object({
     .min(8)
     .regex(/[A-Z]/)
     .regex(/[a-z]/)
-    .regex(/[0-9]/)
+    .regex(/\d/)
     .regex(/[^A-Za-z0-9]/),
   role: z.enum(["CLIENT", "FREELANCER"]),
 });
@@ -36,21 +36,55 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: "An account with this username or email already exists." }, { status: 409 });
   }
 
-  const passwordHash = await hashPassword(payload.password);
-  const verificationToken = makeVerificationToken();
-  const verificationTokenExpiresAt = verificationExpiryDate();
+  const emailRedirectTo = `${appBaseUrl(request)}/verify-email`;
+  let data: { user: { email_confirmed_at?: string | null } | null; session: object | null };
 
-  const user = await prisma.user.create({
-    data: {
+  try {
+    const supabase = getSupabaseServerClient();
+    const result = await supabase.auth.signUp({
+      email: payload.email,
+      password: payload.password,
+      options: {
+        emailRedirectTo,
+        data: {
+          username: payload.username,
+          role: payload.role,
+        },
+      },
+    });
+
+    if (result.error) {
+      return NextResponse.json({ detail: result.error.message || "Supabase sign up failed." }, { status: 400 });
+    }
+
+    data = result.data;
+  } catch (error) {
+    return NextResponse.json(
+      { detail: error instanceof Error ? error.message : "Supabase Auth is not configured." },
+      { status: 503 },
+    );
+  }
+
+  const emailVerified = Boolean(data.user?.email_confirmed_at || data.session);
+
+  const user = await prisma.user.upsert({
+    where: { email: payload.email },
+    update: {
+      name: payload.username,
+      username: payload.username,
+      role: payload.role,
+      emailVerified,
+    },
+    create: {
       name: payload.username,
       username: payload.username,
       email: payload.email,
-      passwordHash,
+      passwordHash: null,
       role: payload.role,
       tokens: payload.role === "CLIENT" ? 100 : 50,
-      emailVerified: false,
-      verificationToken,
-      verificationTokenExpiresAt,
+      emailVerified,
+      verificationToken: null,
+      verificationTokenExpiresAt: null,
     },
     select: {
       id: true,
@@ -61,45 +95,14 @@ export async function POST(request: Request) {
     },
   });
 
-  const verificationLink = `${appBaseUrl(request)}/verify-email?token=${verificationToken}`;
-
-  let mailResult: { sent: boolean };
-
-  try {
-    mailResult = await sendMail({
-      to: payload.email,
-      subject: "Welcome to 2Gathers - Verify your email",
-      text: `Welcome to 2Gathers!\n\nPlease confirm your email address by clicking the link below:\n${verificationLink}\n\nIf you did not create this account, you can safely ignore this email.\n\nThanks,\nThe 2Gathers Team`,
-      html: `<p>Welcome to <strong>2Gathers</strong>!</p><p>Please confirm your email address by clicking the link below:</p><p><a href="${verificationLink}">${verificationLink}</a></p><p>If you did not create this account, you can safely ignore this email.</p><p>Thanks,<br/>The 2Gathers Team</p>`,
-    });
-  } catch {
-    await prisma.user.delete({ where: { id: user.id } });
-
-    return NextResponse.json(
-      {
-        detail: "Email provider authentication failed. Check SMTP user/app password and try again.",
-      },
-      { status: 503 },
-    );
-  }
-
-  if (!mailResult.sent) {
-    await prisma.user.delete({ where: { id: user.id } });
-
-    return NextResponse.json(
-      {
-        detail: "Email service is not configured. Set SMTP credentials to send verification emails.",
-        verificationLink,
-      },
-      { status: 503 },
-    );
-  }
+  const message = emailVerified
+    ? "Registration successful. You can sign in now."
+    : "Registration successful. Please verify your email from Supabase before signing in.";
 
   return NextResponse.json(
     {
-      message: "Registration successful. Please confirm your email before signing in.",
-      emailSent: mailResult.sent,
-      ...(process.env.NODE_ENV !== "production" ? { verificationLink } : {}),
+      message,
+      emailSent: true,
       accessToken: issueAccessToken(user.id),
       user,
     },

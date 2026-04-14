@@ -125,21 +125,37 @@ async function processCallback(paymentLinkId: string, paymentStatus: string, pay
   });
 
   if (user) {
-    await prisma.tokenTransaction.upsert({
-      where: { txHash: mintReceipt.hash },
-      update: {
-        status: "CONFIRMED",
-      },
-      create: {
-        txHash: mintReceipt.hash,
-        userId: user.id,
-        type: "ONRAMP_CREDIT",
-        tokenAmount: payment.tokens,
-        tokenPriceInr: Math.max(1, Math.round(payment.amount / Math.max(1, payment.tokens))),
-        totalInr: payment.amount,
-        status: "CONFIRMED",
-        network: "2Gathers Testnet",
-      },
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.tokenTransaction.findUnique({
+        where: { txHash: mintReceipt.hash },
+        select: { id: true },
+      });
+
+      if (existing) {
+        await tx.tokenTransaction.update({
+          where: { txHash: mintReceipt.hash },
+          data: { status: "CONFIRMED" },
+        });
+        return;
+      }
+
+      await tx.user.update({
+        where: { id: user.id },
+        data: { tokens: { increment: payment.tokens } },
+      });
+
+      await tx.tokenTransaction.create({
+        data: {
+          txHash: mintReceipt.hash,
+          userId: user.id,
+          type: "ONRAMP_CREDIT",
+          tokenAmount: payment.tokens,
+          tokenPriceInr: Math.max(1, Math.round(payment.amount / Math.max(1, payment.tokens))),
+          totalInr: payment.amount,
+          status: "CONFIRMED",
+          network: "2Gathers Testnet",
+        },
+      });
     });
   }
 

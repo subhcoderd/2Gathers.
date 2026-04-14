@@ -1,25 +1,37 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 
 const tokenSchema = z.object({ token: z.string().min(10) });
 
 async function verifyToken(token: string) {
-  const user = await prisma.user.findFirst({
-    where: {
-      verificationToken: token,
-      verificationTokenExpiresAt: { gt: new Date() },
-    },
-    select: { id: true },
-  });
+  let data: { user: { email?: string | null; email_confirmed_at?: string | null } | null };
+  let error: { message?: string } | null;
 
-  if (!user) {
-    return false;
+  try {
+    const supabase = getSupabaseServerClient();
+    const result = await supabase.auth.getUser(token);
+    data = result.data;
+    error = result.error;
+  } catch (clientError) {
+    return {
+      ok: false,
+      detail: clientError instanceof Error ? clientError.message : "Supabase Auth is not configured.",
+    };
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
+  if (error || !data.user?.email) {
+    return { ok: false, detail: "Invalid or expired verification token." };
+  }
+
+  if (!data.user.email_confirmed_at) {
+    return { ok: false, detail: "Email is not confirmed yet. Please complete verification from your inbox." };
+  }
+
+  await prisma.user.updateMany({
+    where: { email: data.user.email },
     data: {
       emailVerified: true,
       verificationToken: null,
@@ -27,18 +39,18 @@ async function verifyToken(token: string) {
     },
   });
 
-  return true;
+  return { ok: true, detail: "Email verified successfully. You can sign in now." };
 }
 
 export async function POST(request: Request) {
   const payload = tokenSchema.parse(await request.json());
-  const ok = await verifyToken(payload.token);
+  const result = await verifyToken(payload.token);
 
-  if (!ok) {
-    return NextResponse.json({ detail: "Invalid or expired verification token." }, { status: 400 });
+  if (!result.ok) {
+    return NextResponse.json({ detail: result.detail }, { status: 400 });
   }
 
-  return NextResponse.json({ message: "Email verified successfully. You can sign in now." });
+  return NextResponse.json({ message: result.detail });
 }
 
 export async function GET(request: Request) {
@@ -50,11 +62,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ detail: "Invalid verification token." }, { status: 400 });
   }
 
-  const ok = await verifyToken(parsed.data.token);
+  const result = await verifyToken(parsed.data.token);
 
-  if (!ok) {
-    return NextResponse.json({ detail: "Invalid or expired verification token." }, { status: 400 });
+  if (!result.ok) {
+    return NextResponse.json({ detail: result.detail }, { status: 400 });
   }
 
-  return NextResponse.json({ message: "Email verified successfully. You can sign in now." });
+  return NextResponse.json({ message: result.detail });
 }

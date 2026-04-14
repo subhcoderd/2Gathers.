@@ -1,7 +1,5 @@
 import "server-only";
 
-import crypto from "node:crypto";
-
 import { ethers } from "ethers";
 
 import { prisma } from "@/lib/prisma";
@@ -66,7 +64,7 @@ export async function linkWalletAddress(userId: string, walletAddress: string) {
 
   const numericUserId = Number(userId);
   if (!Number.isFinite(numericUserId)) {
-    throw new Error("Invalid user id");
+    throw new TypeError("Invalid user id");
   }
 
   const existing = await prisma.user.findFirst({
@@ -96,14 +94,6 @@ export async function linkWalletAddress(userId: string, walletAddress: string) {
   });
 
   return updated;
-}
-
-function shortAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function toTokenAmount(rawValue: bigint) {
-  return Number(ethers.formatUnits(rawValue, TOKEN_DECIMALS));
 }
 
 export async function getWalletState(userId: string): Promise<BlockchainWalletState> {
@@ -141,17 +131,25 @@ export async function getWalletState(userId: string): Promise<BlockchainWalletSt
 
   const transactions: BlockchainLedgerTransaction[] = tokenTxs.map((tx) => {
     const isDebit = tx.type === "JOB_APPLY_DEBIT";
+    let label = "Bought tokens";
+    if (isDebit) {
+      label = "Applied to job";
+    } else if (tx.type === "TASK_REWARD_CREDIT") {
+      label = "Task reward";
+    }
     const amount = isDebit ? -Math.abs(tx.tokenAmount) : Math.abs(tx.tokenAmount);
+    const from = isDebit ? undefined : tx.network;
+    const to = isDebit ? tx.network : undefined;
     return {
       id: String(tx.id),
       hash: tx.txHash,
       type: isDebit ? "send" : "mint",
-      label: isDebit ? "Applied to job" : "Bought tokens",
+      label,
       amount,
       balanceAfter: 0,
       createdAt: tx.createdAt.toISOString(),
-      to: isDebit ? tx.network : undefined,
-      from: !isDebit ? tx.network : undefined,
+      to,
+      from,
     };
   });
 

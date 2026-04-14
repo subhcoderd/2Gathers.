@@ -70,9 +70,9 @@ NEXT_PUBLIC_CHAIN_RPC_URL=https://sepolia.infura.io/v3/your-key
 
 ### After Initial Deployment
 1. Vercel will build and deploy your app
-2. First deployment runs: `npm run build` and `npm run postinstall`
+2. First deployment runs: `npm run vercel-build`
 3. Prisma client generates and DATABASE_URL is applied
-4. Migrations run automatically during build
+4. Schema is synced with `prisma db push` during build
 
 ## Step 4: Verify Deployment
 
@@ -89,9 +89,6 @@ First deployment will auto-generate schema. To sync your existing schema:
 ```bash
 # Run locally first to verify
 npx prisma db push
-
-# Or from Vercel dashboard, use "Edge Function" console and run:
-npx prisma migrate deploy
 ```
 
 ## Environment Variable Reference

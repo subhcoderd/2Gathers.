@@ -191,7 +191,7 @@ export const mockFaqs: MockFaq[] = [
   },
   {
     question: "Is the database real?",
-    answer: "Yes. A Prisma SQLite database is added in the background. Your account data, job history, and wallet activity are persisted in the local database.",
+    answer: "Yes. Prisma persists your account data, job history, and wallet activity in the configured PostgreSQL database.",
   },
 ];
 
