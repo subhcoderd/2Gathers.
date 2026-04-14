@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { issueAccessToken } from "@/lib/auth";
+import { comparePassword, issueAccessToken } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
 
   if (!identifier.includes("@")) {
     const existing = await prisma.user.findUnique({
-      where: { username: payload.username },
+      where: { username: identifier },
       select: { email: true },
     });
 
@@ -48,6 +48,47 @@ export async function POST(request: Request) {
   }
 
   if (error || !data.user?.email) {
+    const localUser = await prisma.user.findFirst({
+      where: identifier.includes("@")
+        ? { email: identifier }
+        : { username: identifier },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        tokens: true,
+        walletAddress: true,
+        emailVerified: true,
+        passwordHash: true,
+        freelancerProfile: { select: { id: true } },
+        clientProfile: { select: { id: true } },
+      },
+    });
+
+    if (localUser?.passwordHash) {
+      const matches = await comparePassword(payload.password, localUser.passwordHash);
+      if (matches) {
+        if (!localUser.emailVerified) {
+          return NextResponse.json({ detail: "Please verify your email before signing in." }, { status: 403 });
+        }
+
+        return NextResponse.json({
+          accessToken: issueAccessToken(localUser.id),
+          user: {
+            id: String(localUser.id),
+            username: localUser.username,
+            email: localUser.email,
+            role: localUser.role,
+            tokens: localUser.tokens,
+            walletAddress: localUser.walletAddress,
+            hasFreelancerProfile: !!localUser.freelancerProfile,
+            hasClientProfile: !!localUser.clientProfile,
+          },
+        });
+      }
+    }
+
     const detail = (error?.message || "").toLowerCase().includes("email not confirmed")
       ? "Please verify your email before signing in."
       : "Invalid username/email or password.";
